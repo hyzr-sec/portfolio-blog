@@ -10,7 +10,7 @@ const allItems = [
     description:
       "Full-stack portfolio and blog platform built with Next.js, featuring advanced SEO optimization and performance monitoring.",
     tags: ["Next.js", "TypeScript", "PostgreSQL", "Tailwind", "React", "Node.js"],
-    github: "https://github.com",
+    github: "https://github.com/hyzr-sec/portfolio-blog",
     demo: "https://hyzr.tech",
     category: "Web Development",
     type: "project",
