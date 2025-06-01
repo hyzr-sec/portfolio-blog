@@ -54,12 +54,11 @@ export function CTFAuthoredGrid() {
   const [searchTerm, setSearchTerm] = useState("")
 
   const filteredChallenges = authoredChallenges.filter((challenge) => {
-    const matchesSearch =
+    return (
       challenge.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
       challenge.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
       challenge.ctfName.toLowerCase().includes(searchTerm.toLowerCase())
-
-    return matchesSearch
+    )
   })
 
   return (

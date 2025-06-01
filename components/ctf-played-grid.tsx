@@ -53,12 +53,11 @@ export function CTFPlayedGrid() {
 	const [searchTerm, setSearchTerm] = useState("")
 
 	const filteredWriteups = ctfWriteups.filter((writeup) => {
-		const matchesSearch =
+		return (
 			writeup.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
 			writeup.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
 			writeup.ctfName.toLowerCase().includes(searchTerm.toLowerCase())
-
-		return matchesSearch
+		)
 	})
 
 	return (
