@@ -1,4 +1,7 @@
 User-agent: *
-Disallow:
+Allow: /
+
+# Optional: Set crawl delay for non-Google bots
+# Crawl-delay: 10
 
 Sitemap: https://hyzr.tech/sitemap.xml
